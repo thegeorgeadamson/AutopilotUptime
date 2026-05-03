@@ -131,6 +131,52 @@
       color: var(--ink-soft);
     }
 
+    /* Range selector */
+    .range-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 24px 0 16px;
+      flex-wrap: wrap;
+    }
+    .range-label {
+      font-size: 12px;
+      color: var(--ink-mute);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .range-pills {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--glass-strong);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .range-pill {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink-soft);
+      cursor: pointer;
+      letter-spacing: 0.01em;
+      transition: background 120ms ease, color 120ms ease;
+      font-family: inherit;
+    }
+    .range-pill:hover { color: var(--ink); }
+    .range-pill.active {
+      background: var(--ink);
+      color: #fff;
+    }
+
     /* Target cards */
     .targets { display: grid; gap: 12px; }
 
@@ -209,6 +255,7 @@
     .bar.up    { background: var(--up); }
     .bar.warn  { background: var(--warn); }
     .bar.down  { background: var(--down); }
+    .bar.none  { background: rgba(0, 0, 0, 0.06); }
     .bar:hover { transform: scaleY(1.1); }
     .bars-foot {
       display: flex;
@@ -276,6 +323,17 @@
       </div>
     </section>
 
+    <div class="range-bar" role="tablist" aria-label="Time range">
+      <span class="range-label" id="rangeLabel">Last 24 hours</span>
+      <div class="range-pills" id="rangePills">
+        <button class="range-pill" data-range="1h" type="button">1H</button>
+        <button class="range-pill" data-range="6h" type="button">6H</button>
+        <button class="range-pill active" data-range="24h" type="button">24H</button>
+        <button class="range-pill" data-range="7d" type="button">7D</button>
+        <button class="range-pill" data-range="30d" type="button">30D</button>
+      </div>
+    </div>
+
     <section class="targets" id="targets" aria-live="polite"></section>
 
     <footer>
@@ -322,43 +380,50 @@
       return 'warn';
     }
 
-    function renderBars(history) {
-      const slice = (history ?? []).slice(-BARS_COUNT);
-      const padCount = Math.max(0, BARS_COUNT - slice.length);
-      const bars = [];
-      for (let i = 0; i < padCount; i++) {
-        bars.push('<span class="bar" title="No data"></span>');
-      }
-      for (const h of slice) {
-        const cls = statusClass(h.status);
-        const tip = `${fmtTime(h.t)} · ${STATUS_LABEL[h.status] ?? h.status} · ${h.code ?? '—'} · ${h.ms}ms`;
-        bars.push(`<span class="bar ${cls}" title="${tip}"></span>`);
-      }
-      const first = slice[0]?.t;
-      const last = slice.at(-1)?.t;
+    function renderBars(series, rangeLabel) {
+      const arr = series ?? [];
+      const bars = arr.map((b) => {
+        const cls = b.status === 'none' ? 'none' : statusClass(b.status);
+        const summary =
+          b.status === 'none'
+            ? 'No data'
+            : `${b.up}/${b.total} up · ${b.avgMs}ms avg`;
+        const tip = `${fmtTime(b.t)} · ${summary}`;
+        return `<span class="bar ${cls}" title="${tip}"></span>`;
+      });
+      const firstWithData = arr.find((b) => b.status !== 'none');
+      const startedRel = firstWithData ? fmtRel(firstWithData.t) : rangeLabel;
       return `
         <div class="bars">${bars.join('')}</div>
         <div class="bars-foot">
-          <span>${first ? fmtRel(first) : ''}</span>
-          <span>${slice.length} checks</span>
-          <span>${last ? 'now' : ''}</span>
+          <span>${startedRel}</span>
+          <span>${arr.length} buckets</span>
+          <span>now</span>
         </div>
       `;
     }
 
-    function renderTarget(target, history) {
+    function renderTarget(target, series, rangeLabel) {
       const cls = statusClass(target.status);
       const label = STATUS_LABEL[target.status] ?? '—';
       const latency = target.latencyMs != null ? target.latencyMs + ' ms' : '—';
       const code = target.statusCode ?? (target.error ? target.error : '—');
+      const withData = (series ?? []).filter((b) => b.status !== 'none');
+      const totalChecks = withData.reduce((s, b) => s + b.total, 0);
+      const upChecks = withData.reduce((s, b) => s + b.up, 0);
+      const uptime =
+        totalChecks > 0
+          ? ((upChecks / totalChecks) * 100).toFixed(totalChecks > 100 ? 2 : 1) + '%'
+          : '—';
       return `
         <article class="card">
           <div class="card-head">
             <span class="card-name">${target.name}</span>
             <span class="status-chip ${cls}"><span class="dot"></span>${label}</span>
           </div>
-          ${renderBars(history)}
+          ${renderBars(series, rangeLabel)}
           <div class="card-meta" style="margin-top:12px;justify-content:space-between">
+            <span><strong>${uptime}</strong> uptime</span>
             <span><strong>${code}</strong></span>
             <span><strong>${latency}</strong></span>
             <span>checked ${fmtRel(target.checkedAt)}</span>
@@ -391,20 +456,34 @@
     }
 
     const API = 'https://uptime-api.aplt.ai';
+    const RANGE_KEY = 'autopilot-status-range';
+    const VALID_RANGES = ['1h', '6h', '24h', '7d', '30d'];
+    let currentRange =
+      VALID_RANGES.includes(localStorage.getItem(RANGE_KEY))
+        ? localStorage.getItem(RANGE_KEY)
+        : '24h';
+
+    function setActivePill(range) {
+      document.querySelectorAll('.range-pill').forEach((el) => {
+        el.classList.toggle('active', el.dataset.range === range);
+      });
+    }
 
     async function load() {
       let current = null;
-      let history = {};
+      let series = null;
       try {
-        const [c, h] = await Promise.all([
+        const [c, s] = await Promise.all([
           fetch(`${API}/current`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
-          fetch(`${API}/history?hours=6`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : {})),
+          fetch(`${API}/series?range=${currentRange}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
         ]);
         current = c;
-        history = h ?? {};
+        series = s;
       } catch (e) {
         // API unreachable
       }
+
+      document.getElementById('rangeLabel').textContent = series?.label ?? '';
 
       const targetsEl = document.getElementById('targets');
       const allUnknown =
@@ -420,12 +499,26 @@
       }
 
       renderBanner(current.targets);
+      const seriesByTarget = series?.targets ?? {};
+      const rangeLabel = series?.label ?? '';
       const html = Object.values(current.targets)
-        .map((t) => renderTarget(t, history[t.id]))
+        .map((t) => renderTarget(t, seriesByTarget[t.id], rangeLabel))
         .join('');
       targetsEl.innerHTML = html;
     }
 
+    document.getElementById('rangePills').addEventListener('click', (e) => {
+      const btn = e.target.closest('.range-pill');
+      if (!btn) return;
+      const r = btn.dataset.range;
+      if (r === currentRange) return;
+      currentRange = r;
+      localStorage.setItem(RANGE_KEY, r);
+      setActivePill(r);
+      load();
+    });
+
+    setActivePill(currentRange);
     load();
     // Auto-refresh every 30s — checks land every minute on the worker.
     setInterval(load, 30_000);

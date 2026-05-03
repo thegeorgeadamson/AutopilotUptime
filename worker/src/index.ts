@@ -122,6 +122,19 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// Time-range presets for the /series endpoint. Picks a bucket size that
+// keeps the rendered bar count between 30 and 100 — enough resolution
+// to spot incidents without overcrowding the chart.
+type RangeKey = "1h" | "6h" | "24h" | "7d" | "30d";
+const RANGES: Record<RangeKey, { hours: number; bucketSecs: number; buckets: number; label: string }> = {
+  "1h":  { hours: 1,   bucketSecs: 60,    buckets: 60,  label: "Last hour" },
+  "6h":  { hours: 6,   bucketSecs: 300,   buckets: 72,  label: "Last 6 hours" },
+  "24h": { hours: 24,  bucketSecs: 900,   buckets: 96,  label: "Last 24 hours" },
+  "7d":  { hours: 168, bucketSecs: 7200,  buckets: 84,  label: "Last 7 days" },
+  "30d": { hours: 720, bucketSecs: 43200, buckets: 60,  label: "Last 30 days" },
+};
+const DEFAULT_RANGE: RangeKey = "24h";
+
 function json(data: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
@@ -196,48 +209,92 @@ export default {
       return json({ checkedAt: new Date().toISOString(), targets: byId });
     }
 
-    if (url.pathname === "/history") {
-      const hours = Math.min(
-        168,
-        Math.max(1, Number(url.searchParams.get("hours") ?? 6))
-      );
-      const since = new Date(Date.now() - hours * 3600_000).toISOString();
-      const { results } = await env.DB.prepare(
-        `SELECT target_id, ok, status, status_code, latency_ms, checked_at
-         FROM checks
-         WHERE checked_at >= ?
-         ORDER BY checked_at ASC`
-      )
-        .bind(since)
-        .all<{
-          target_id: string;
-          ok: number;
-          status: string;
-          status_code: number | null;
-          latency_ms: number;
-          checked_at: string;
-        }>();
+    if (url.pathname === "/series") {
+      const rangeKey = (url.searchParams.get("range") ?? DEFAULT_RANGE) as RangeKey;
+      const range = RANGES[rangeKey] ?? RANGES[DEFAULT_RANGE];
+      const sinceUnix = Math.floor(Date.now() / 1000) - range.hours * 3600;
 
-      const byTarget: Record<string, unknown[]> = {};
-      for (const t of TARGETS) byTarget[t.id] = [];
+      // Bucket by integer-divide of unix seconds so bucket starts align
+      // to clock boundaries (top of the minute, hour, etc).
+      // Inlining bucketSecs and sinceUnix (both server-side trusted values
+      // sourced from the RANGES whitelist) — D1's parameter binding inside
+      // arithmetic expressions on aggregate columns is unreliable.
+      const { results } = await env.DB.prepare(
+        `SELECT
+           target_id,
+           (CAST(strftime('%s', checked_at) AS INTEGER) / ${range.bucketSecs}) * ${range.bucketSecs} AS bucket_unix,
+           SUM(ok) AS up,
+           COUNT(*) AS total,
+           AVG(latency_ms) AS avg_ms
+         FROM checks
+         WHERE CAST(strftime('%s', checked_at) AS INTEGER) >= ${sinceUnix}
+         GROUP BY target_id, bucket_unix
+         ORDER BY bucket_unix ASC`
+      ).all<{
+        target_id: string;
+        bucket_unix: number;
+        up: number;
+        total: number;
+        avg_ms: number;
+      }>();
+
+      // Index incoming buckets so we can fill empty windows. D1 sometimes
+      // hands back numeric columns as strings, so normalize to Number for
+      // reliable Map.get().
+      const byTargetByBucket: Record<string, Map<number, typeof results[number]>> = {};
+      for (const t of TARGETS) byTargetByBucket[t.id] = new Map();
       for (const row of results) {
-        const arr = byTarget[row.target_id];
-        if (arr) {
-          arr.push({
-            t: row.checked_at,
-            ok: !!row.ok,
-            status: row.status,
-            code: row.status_code,
-            ms: row.latency_ms,
-          });
-        }
+        byTargetByBucket[row.target_id]?.set(Number(row.bucket_unix), row);
       }
-      return json(byTarget);
+
+      // Walk backwards from the most recent aligned bucket so all targets
+      // share the same x-axis even when some have gaps.
+      const nowUnix = Math.floor(Date.now() / 1000);
+      const lastBucket =
+        Math.floor(nowUnix / range.bucketSecs) * range.bucketSecs;
+      const bucketStarts: number[] = [];
+      for (let i = range.buckets - 1; i >= 0; i--) {
+        bucketStarts.push(lastBucket - i * range.bucketSecs);
+      }
+
+      const out: Record<string, unknown[]> = {};
+      for (const t of TARGETS) {
+        const map = byTargetByBucket[t.id]!;
+        out[t.id] = bucketStarts.map((startUnix) => {
+          const row = map.get(startUnix);
+          if (!row) {
+            return { t: new Date(startUnix * 1000).toISOString(), status: "none", up: 0, total: 0, avgMs: null };
+          }
+          const up = row.up;
+          const total = row.total;
+          let status: "up" | "degraded" | "down";
+          if (up === total) status = "up";
+          else if (up === 0) status = "down";
+          else status = "degraded";
+          return {
+            t: new Date(startUnix * 1000).toISOString(),
+            status,
+            up,
+            total,
+            avgMs: Math.round(row.avg_ms),
+          };
+        });
+      }
+
+      return json({
+        range: rangeKey,
+        label: range.label,
+        bucketSecs: range.bucketSecs,
+        buckets: range.buckets,
+        targets: out,
+      });
     }
 
     if (url.pathname === "/" || url.pathname === "") {
       return new Response(
-        "Autopilot Uptime API\n\nGET /current — latest check per target\nGET /history?hours=N — raw checks for the last N hours (max 168)\n",
+        "Autopilot Uptime API\n\n" +
+          "GET /current — latest check per target\n" +
+          "GET /series?range=1h|6h|24h|7d|30d — bucketed time series (default 24h)\n",
         { headers: { "Content-Type": "text/plain", ...CORS } }
       );
     }
