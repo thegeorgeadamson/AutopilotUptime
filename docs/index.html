@@ -279,7 +279,7 @@
     <section class="targets" id="targets" aria-live="polite"></section>
 
     <footer>
-      <span>Checks every 5 minutes</span>
+      <span>Checks every minute</span>
       <span>
         <a href="https://github.com/thegeorgeadamson/AutopilotUptime" target="_blank" rel="noopener">View source</a>
       </span>
@@ -390,26 +390,32 @@
       }
     }
 
+    const API = 'https://uptime-api.aplt.ai';
+
     async function load() {
       let current = null;
       let history = {};
       try {
         const [c, h] = await Promise.all([
-          fetch('./data/current.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
-          fetch('./data/history.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : {})),
+          fetch(`${API}/current`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${API}/history?hours=6`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : {})),
         ]);
         current = c;
         history = h ?? {};
       } catch (e) {
-        // first deploy — no data yet
+        // API unreachable
       }
 
       const targetsEl = document.getElementById('targets');
-      if (!current || !current.targets) {
+      const allUnknown =
+        current?.targets &&
+        Object.values(current.targets).every((t) => t.status === 'unknown');
+
+      if (!current || !current.targets || allUnknown) {
         document.getElementById('bannerTitle').textContent = 'Awaiting first check';
-        document.getElementById('bannerSub').textContent = 'GitHub Actions runs every 5 minutes.';
+        document.getElementById('bannerSub').textContent = 'Cron fires every minute.';
         document.getElementById('bannerDot').classList.add('warn');
-        targetsEl.innerHTML = '<div class="empty">No data yet. Once the first scheduled run completes, results will appear here.</div>';
+        targetsEl.innerHTML = '<div class="empty">No data yet. Results will appear here within a minute.</div>';
         return;
       }
 
@@ -421,8 +427,8 @@
     }
 
     load();
-    // Light auto-refresh so the page stays current without a manual reload.
-    setInterval(load, 60_000);
+    // Auto-refresh every 30s — checks land every minute on the worker.
+    setInterval(load, 30_000);
   </script>
 </body>
 </html>

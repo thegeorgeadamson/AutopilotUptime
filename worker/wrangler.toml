@@ -1,0 +1,20 @@
+name = "autopilot-uptime"
+main = "src/index.ts"
+compatibility_date = "2026-01-15"
+workers_dev = false
+
+# Custom subdomain. Wrangler creates the DNS record on the aplt.ai
+# Cloudflare zone automatically when you deploy.
+routes = [
+  { pattern = "uptime-api.aplt.ai", custom_domain = true }
+]
+
+# 1-minute cron — Cloudflare's minimum and most reliable schedule.
+[triggers]
+crons = ["* * * * *"]
+
+# D1 database — bound as `env.DB` in the Worker.
+[[d1_databases]]
+binding = "DB"
+database_name = "autopilot-uptime"
+database_id = "65b5ad4b-5b4d-4347-abdf-195863de72e5"
