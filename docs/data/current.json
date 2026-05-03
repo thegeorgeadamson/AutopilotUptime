@@ -1,16 +1,15 @@
 {
-  "checkedAt": "2026-05-03T07:26:08.453Z",
+  "checkedAt": "2026-05-03T07:32:26.025Z",
   "targets": {
     "app": {
       "id": "app",
       "name": "Autopilot App",
-      "url": "https://app.aplt.ai",
-      "ok": false,
-      "status": "down",
-      "statusCode": null,
-      "latencyMs": 138,
-      "checkedAt": "2026-05-03T07:26:07.472Z",
-      "error": "fetch failed"
+      "url": "https://aplt.ai/dashboard",
+      "ok": true,
+      "status": "up",
+      "statusCode": 200,
+      "latencyMs": 1329,
+      "checkedAt": "2026-05-03T07:32:26.024Z"
     },
     "www": {
       "id": "www",
@@ -19,8 +18,8 @@
       "ok": true,
       "status": "up",
       "statusCode": 200,
-      "latencyMs": 1046,
-      "checkedAt": "2026-05-03T07:26:08.450Z"
+      "latencyMs": 884,
+      "checkedAt": "2026-05-03T07:32:25.624Z"
     },
     "backend": {
       "id": "backend",
@@ -29,8 +28,8 @@
       "ok": true,
       "status": "up",
       "statusCode": 401,
-      "latencyMs": 141,
-      "checkedAt": "2026-05-03T07:26:07.546Z"
+      "latencyMs": 403,
+      "checkedAt": "2026-05-03T07:32:25.144Z"
     },
     "companion": {
       "id": "companion",
@@ -39,8 +38,8 @@
       "ok": true,
       "status": "up",
       "statusCode": 404,
-      "latencyMs": 183,
-      "checkedAt": "2026-05-03T07:26:07.589Z"
+      "latencyMs": 264,
+      "checkedAt": "2026-05-03T07:32:25.005Z"
     }
   }
 }

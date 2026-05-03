@@ -3,8 +3,8 @@
     {
       "id": "app",
       "name": "Autopilot App",
-      "url": "https://app.aplt.ai",
-      "acceptStatus": [200]
+      "url": "https://aplt.ai/dashboard",
+      "acceptStatus": [200, 401]
     },
     {
       "id": "www",
