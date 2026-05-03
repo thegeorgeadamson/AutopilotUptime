@@ -380,7 +380,15 @@
       return 'warn';
     }
 
-    function renderBars(series, rangeLabel) {
+    const RANGE_EDGE_LABEL = {
+      '1h':  '1h ago',
+      '6h':  '6h ago',
+      '24h': '24h ago',
+      '7d':  '7d ago',
+      '30d': '30d ago',
+    };
+
+    function renderBars(series, rangeKey) {
       const arr = series ?? [];
       const bars = arr.map((b) => {
         const cls = b.status === 'none' ? 'none' : statusClass(b.status);
@@ -391,19 +399,17 @@
         const tip = `${fmtTime(b.t)} · ${summary}`;
         return `<span class="bar ${cls}" title="${tip}"></span>`;
       });
-      const firstWithData = arr.find((b) => b.status !== 'none');
-      const startedRel = firstWithData ? fmtRel(firstWithData.t) : rangeLabel;
       return `
         <div class="bars">${bars.join('')}</div>
         <div class="bars-foot">
-          <span>${startedRel}</span>
+          <span>${RANGE_EDGE_LABEL[rangeKey] ?? ''}</span>
           <span>${arr.length} buckets</span>
           <span>now</span>
         </div>
       `;
     }
 
-    function renderTarget(target, series, rangeLabel) {
+    function renderTarget(target, series, rangeKey) {
       const cls = statusClass(target.status);
       const label = STATUS_LABEL[target.status] ?? '—';
       const latency = target.latencyMs != null ? target.latencyMs + ' ms' : '—';
@@ -421,7 +427,7 @@
             <span class="card-name">${target.name}</span>
             <span class="status-chip ${cls}"><span class="dot"></span>${label}</span>
           </div>
-          ${renderBars(series, rangeLabel)}
+          ${renderBars(series, rangeKey)}
           <div class="card-meta" style="margin-top:12px;justify-content:space-between">
             <span><strong>${uptime}</strong> uptime</span>
             <span><strong>${code}</strong></span>
@@ -500,9 +506,8 @@
 
       renderBanner(current.targets);
       const seriesByTarget = series?.targets ?? {};
-      const rangeLabel = series?.label ?? '';
       const html = Object.values(current.targets)
-        .map((t) => renderTarget(t, seriesByTarget[t.id], rangeLabel))
+        .map((t) => renderTarget(t, seriesByTarget[t.id], currentRange))
         .join('');
       targetsEl.innerHTML = html;
     }
