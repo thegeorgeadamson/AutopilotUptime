@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-05-03T07:24:18.823Z",
+  "checkedAt": "2026-05-03T07:25:21.431Z",
   "targets": {
     "app": {
       "id": "app",
@@ -8,8 +8,8 @@
       "ok": false,
       "status": "down",
       "statusCode": null,
-      "latencyMs": 75,
-      "checkedAt": "2026-05-03T07:24:16.701Z",
+      "latencyMs": 250,
+      "checkedAt": "2026-05-03T07:25:21.174Z",
       "error": "fetch failed"
     },
     "www": {
@@ -19,8 +19,8 @@
       "ok": true,
       "status": "up",
       "statusCode": 200,
-      "latencyMs": 2139,
-      "checkedAt": "2026-05-03T07:24:18.822Z"
+      "latencyMs": 442,
+      "checkedAt": "2026-05-03T07:25:21.427Z"
     },
     "backend": {
       "id": "backend",
@@ -29,8 +29,8 @@
       "ok": true,
       "status": "up",
       "statusCode": 401,
-      "latencyMs": 372,
-      "checkedAt": "2026-05-03T07:24:17.056Z"
+      "latencyMs": 214,
+      "checkedAt": "2026-05-03T07:25:21.200Z"
     },
     "companion": {
       "id": "companion",
@@ -39,8 +39,8 @@
       "ok": true,
       "status": "up",
       "statusCode": 404,
-      "latencyMs": 253,
-      "checkedAt": "2026-05-03T07:24:16.937Z"
+      "latencyMs": 144,
+      "checkedAt": "2026-05-03T07:25:21.131Z"
     }
   }
 }
