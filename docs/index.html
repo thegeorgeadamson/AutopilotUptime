@@ -247,6 +247,36 @@
       background: currentColor;
     }
 
+    /* 90-day calendar strip */
+    .calendar {
+      display: flex;
+      gap: 2px;
+      height: 8px;
+      margin: 4px 0 18px;
+    }
+    .day {
+      flex: 1;
+      min-width: 1px;
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.06);
+      transition: transform 120ms ease;
+    }
+    .day.up   { background: var(--up); }
+    .day.warn { background: var(--warn); }
+    .day.down { background: var(--down); }
+    .day.none { background: rgba(0, 0, 0, 0.05); }
+    .day:hover { transform: scaleY(1.4); }
+    .calendar-foot {
+      display: flex;
+      justify-content: space-between;
+      margin-top: -10px;
+      margin-bottom: 16px;
+      font-size: 10px;
+      color: var(--ink-mute);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
     /* Bar chart */
     .bars {
       display: flex;
@@ -310,6 +340,7 @@
       .card { padding: 16px 14px; border-radius: 14px; }
       .card-meta { gap: 10px; flex-wrap: wrap; row-gap: 4px; }
       .bars { gap: 1px; }
+      .calendar { gap: 1px; height: 7px; margin-bottom: 14px; }
       .range-bar { gap: 8px; }
       .range-pill { padding: 5px 10px; font-size: 11px; }
     }
@@ -423,7 +454,25 @@
       `;
     }
 
-    function renderTarget(target, series, rangeKey) {
+    function renderCalendar(days) {
+      if (!days || !days.length) return '';
+      const cells = days.map((d) => {
+        const cls = d.status === 'none' ? 'none' : statusClass(d.status);
+        const pct =
+          d.total > 0 ? ((d.up / d.total) * 100).toFixed(d.total > 100 ? 2 : 1) + '%' : 'no data';
+        const tip = `${d.date} · ${pct}${d.total ? ' · ' + d.total + ' checks' : ''}`;
+        return `<span class="day ${cls}" title="${tip}"></span>`;
+      });
+      return `
+        <div class="calendar">${cells.join('')}</div>
+        <div class="calendar-foot">
+          <span>${days.length}d ago</span>
+          <span>today</span>
+        </div>
+      `;
+    }
+
+    function renderTarget(target, series, rangeKey, calendar) {
       const cls = statusClass(target.status);
       const label = STATUS_LABEL[target.status] ?? '—';
       const latency = target.latencyMs != null ? target.latencyMs + ' ms' : '—';
@@ -441,6 +490,7 @@
             <span class="card-name">${target.name}</span>
             <span class="status-chip ${cls}"><span class="dot"></span>${label}</span>
           </div>
+          ${renderCalendar(calendar)}
           ${renderBars(series, rangeKey)}
           <div class="card-meta" style="margin-top:12px;justify-content:space-between">
             <span><strong>${uptime}</strong> uptime</span>
@@ -492,13 +542,16 @@
     async function load() {
       let current = null;
       let series = null;
+      let calendar = null;
       try {
-        const [c, s] = await Promise.all([
+        const [c, s, cal] = await Promise.all([
           fetch(`${API}/current`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
           fetch(`${API}/series?range=${currentRange}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${API}/calendar?days=90`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
         ]);
         current = c;
         series = s;
+        calendar = cal;
       } catch (e) {
         // API unreachable
       }
@@ -520,8 +573,9 @@
 
       renderBanner(current.targets);
       const seriesByTarget = series?.targets ?? {};
+      const calendarByTarget = calendar?.targets ?? {};
       const html = Object.values(current.targets)
-        .map((t) => renderTarget(t, seriesByTarget[t.id], currentRange))
+        .map((t) => renderTarget(t, seriesByTarget[t.id], currentRange, calendarByTarget[t.id]))
         .join('');
       targetsEl.innerHTML = html;
     }

@@ -1,5 +1,8 @@
 interface Env {
   DB: D1Database;
+  // Optional — set via `wrangler secret put DISCORD_WEBHOOK_URL`.
+  // When present, the Worker posts to it on any up<->down transition.
+  DISCORD_WEBHOOK_URL?: string;
 }
 
 type Target = {
@@ -97,7 +100,21 @@ async function checkTarget(t: Target): Promise<CheckResult> {
 }
 
 async function runChecks(env: Env): Promise<CheckResult[]> {
+  // Snapshot the previous state per target BEFORE inserting new rows so
+  // we can detect up<->down transitions for alerting.
+  const { results: prevRows } = await env.DB.prepare(
+    `SELECT c.target_id, c.ok
+     FROM checks c
+     INNER JOIN (
+       SELECT target_id, MAX(id) AS max_id FROM checks GROUP BY target_id
+     ) m ON m.target_id = c.target_id AND m.max_id = c.id`
+  ).all<{ target_id: string; ok: number }>();
+  const prevByTarget = new Map<string, boolean>(
+    prevRows.map((r) => [r.target_id, !!r.ok])
+  );
+
   const results = await Promise.all(TARGETS.map(checkTarget));
+
   const stmts = results.map((r) =>
     env.DB.prepare(
       `INSERT INTO checks (target_id, ok, status, status_code, latency_ms, error, checked_at)
@@ -113,7 +130,50 @@ async function runChecks(env: Env): Promise<CheckResult[]> {
     )
   );
   await env.DB.batch(stmts);
+
+  if (env.DISCORD_WEBHOOK_URL) {
+    const transitions = results.flatMap((r) => {
+      const prev = prevByTarget.get(r.id);
+      // Skip first-ever check (nothing to compare against). Otherwise
+      // alert on any change to the boolean ok flag.
+      if (prev === undefined || prev === r.ok) return [];
+      return [{ result: r, recovered: r.ok }];
+    });
+    if (transitions.length > 0) {
+      await postDiscordAlerts(env.DISCORD_WEBHOOK_URL, transitions);
+    }
+  }
+
   return results;
+}
+
+async function postDiscordAlerts(
+  webhookUrl: string,
+  transitions: Array<{ result: CheckResult; recovered: boolean }>
+) {
+  // Discord allows up to 10 embeds per message — well within for 4 targets.
+  const embeds = transitions.map(({ result, recovered }) => {
+    const detailLines: string[] = [];
+    if (result.statusCode != null) detailLines.push(`HTTP ${result.statusCode}`);
+    if (result.error) detailLines.push(result.error);
+    detailLines.push(`${result.latencyMs}ms`);
+    return {
+      title: recovered
+        ? `🟢 ${result.name} recovered`
+        : `🔴 ${result.name} is down`,
+      url: "https://status.aplt.ai",
+      description: detailLines.join(" · "),
+      color: recovered ? 0x57f287 : 0xed4245,
+      timestamp: result.checkedAt,
+      footer: { text: result.url },
+    };
+  });
+
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ embeds }),
+  });
 }
 
 const CORS = {
@@ -290,11 +350,74 @@ export default {
       });
     }
 
+    if (url.pathname === "/calendar") {
+      const days = Math.min(
+        180,
+        Math.max(7, Number(url.searchParams.get("days") ?? 90))
+      );
+      const since = new Date(Date.now() - days * 86400_000)
+        .toISOString()
+        .slice(0, 10);
+
+      const { results } = await env.DB.prepare(
+        `SELECT
+           target_id,
+           DATE(checked_at) AS day,
+           SUM(ok) AS up,
+           COUNT(*) AS total
+         FROM checks
+         WHERE DATE(checked_at) >= ?
+         GROUP BY target_id, day
+         ORDER BY day ASC`
+      )
+        .bind(since)
+        .all<{ target_id: string; day: string; up: number; total: number }>();
+
+      // Index by target+day for O(1) lookup.
+      const byTargetByDay: Record<string, Map<string, { up: number; total: number }>> = {};
+      for (const t of TARGETS) byTargetByDay[t.id] = new Map();
+      for (const row of results) {
+        byTargetByDay[row.target_id]?.set(row.day, {
+          up: Number(row.up),
+          total: Number(row.total),
+        });
+      }
+
+      // Build the day axis (UTC) so all targets share the same X positions.
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const dayList: string[] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(today);
+        d.setUTCDate(d.getUTCDate() - i);
+        dayList.push(d.toISOString().slice(0, 10));
+      }
+
+      const out: Record<string, unknown[]> = {};
+      for (const t of TARGETS) {
+        const map = byTargetByDay[t.id]!;
+        out[t.id] = dayList.map((date) => {
+          const cell = map.get(date);
+          if (!cell || cell.total === 0) {
+            return { date, status: "none", up: 0, total: 0 };
+          }
+          let status: "up" | "degraded" | "down";
+          if (cell.up === cell.total) status = "up";
+          else if (cell.up === 0) status = "down";
+          else status = "degraded";
+          return { date, status, up: cell.up, total: cell.total };
+        });
+      }
+
+      return json({ days, targets: out });
+    }
+
     if (url.pathname === "/" || url.pathname === "") {
       return new Response(
         "Autopilot Uptime API\n\n" +
           "GET /current — latest check per target\n" +
-          "GET /series?range=1h|6h|24h|7d|30d — bucketed time series (default 24h)\n",
+          "GET /series?range=1h|6h|24h|7d|30d — bucketed time series (default 24h)\n" +
+          "GET /calendar?days=N — daily uptime aggregates (max 180, default 90)\n",
         { headers: { "Content-Type": "text/plain", ...CORS } }
       );
     }
